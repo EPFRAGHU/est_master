@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ app_title }}</title>
+<style>
+  :root {
+    --primary: #1a5276;
+    --primary-light: #2980b9;
+    --bg: #f4f6f8;
+    --border: #d5dbdb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: var(--bg);
+    color: #212f3d;
+    font-size: 14px;
+  }
+  header {
+    background: var(--primary);
+    color: #fff;
+    padding: 12px 20px;
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  header h1 { margin: 0; font-size: 20px; }
+  header .sub { font-size: 13px; opacity: 0.85; }
+  .container { padding: 14px 20px; }
+
+  .search-bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .search-bar input[type=text] {
+    flex: 1;
+    min-width: 240px;
+    max-width: 480px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  select, button {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+    background: #fff;
+    cursor: pointer;
+  }
+  button.primary { background: var(--primary-light); color: #fff; border-color: var(--primary-light); }
+  button:hover { filter: brightness(0.95); }
+
+  .filters {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+  }
+  .filters summary { cursor: pointer; font-weight: 600; color: var(--primary); }
+  .filter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 8px 16px;
+    margin-top: 10px;
+  }
+  .filter-item { display: flex; flex-direction: column; gap: 3px; }
+  .filter-item label { font-size: 12px; font-weight: 600; color: #566573; }
+  .filter-item select { width: 100%; }
+
+  .status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  #status { font-weight: 600; color: var(--primary); }
+
+  .table-wrap {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: auto;
+    max-height: 55vh;
+  }
+  table { border-collapse: collapse; width: 100%; white-space: nowrap; }
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--primary);
+    color: #fff;
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 12.5px;
+    cursor: pointer;
+    user-select: none;
+  }
+  thead th .arrow { font-size: 10px; margin-left: 3px; }
+  tbody td { padding: 6px 10px; border-bottom: 1px solid #eef1f2; font-size: 13px; }
+  tbody tr:hover { background: #eaf2f8; cursor: pointer; }
+  tbody tr.selected { background: #d4e6f1; }
+
+  .pagination { display: flex; gap: 6px; align-items: center; }
+  .pagination button:disabled { opacity: 0.4; cursor: default; }
+
+  .detail {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-top: 12px;
+    padding: 12px 16px;
+  }
+  .detail h2 { margin: 0 0 10px; font-size: 15px; color: var(--primary); }
+  .detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 4px 24px;
+  }
+  .detail-row { display: flex; font-size: 13px; padding: 3px 0; border-bottom: 1px dotted #e5e8e8; }
+  .detail-row .dl { width: 190px; color: #566573; flex-shrink: 0; }
+  .detail-row .dv { font-weight: 600; word-break: break-word; }
+  .muted { color: #85929e; }
+  .spinner { display: none; color: var(--primary-light); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{ app_title }}</h1>
+  <span class="sub">{{ "{:,}".format(total_records) }} establishments loaded</span>
+</header>
+
+<div class="container">
+
+  <div class="search-bar">
+    <input type="text" id="q" placeholder="Search establishments... (name, ID, address, PAN, PIN...)" autofocus>
+    <label>in:</label>
+    <select id="field">
+      <option value="all">All fields</option>
+      <option value="est_id">Establishment ID</option>
+      <option value="est_name">Establishment Name</option>
+      <option value="address">Address</option>
+      <option value="city_dist_pin">City / District / PIN</option>
+      <option value="pan_cin">PAN / CIN</option>
+      <option value="lin">LIN Code</option>
+    </select>
+    <button class="primary" onclick="runSearch(1)">Search</button>
+    <button onclick="clearSearch()">Clear</button>
+    <span class="spinner" id="spinner">Searching...</span>
+  </div>
+
+  <details class="filters" open>
+    <summary>Filters</summary>
+    <div class="filter-grid">
+      {% for label, col in filter_columns %}
+      <div class="filter-item">
+        <label>{{ label }}</label>
+        <select id="f_{{ col }}" onchange="runSearch(1)">
+          <option value="All">All</option>
+        </select>
+      </div>
+      {% endfor %}
+      <div class="filter-item">
+        <label>&nbsp;</label>
+        <button onclick="resetFilters()">Reset Filters</button>
+      </div>
+    </div>
+  </details>
+
+  <div class="status-bar">
+    <span id="status">Loading...</span>
+    <div class="pagination">
+      <button id="prevBtn" onclick="changePage(-1)">&laquo; Prev</button>
+      <span id="pageInfo"></span>
+      <button id="nextBtn" onclick="changePage(1)">Next &raquo;</button>
+      <button onclick="exportResults('csv')">Export CSV</button>
+      <button onclick="exportResults('xlsx')">Export Excel</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% for col, label in display_columns %}
+          <th data-col="{{ col }}" onclick="sortBy('{{ col }}')">{{ label }}<span class="arrow"></span></th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody id="results"></tbody>
+    </table>
+  </div>
+
+  <div class="detail">
+    <h2>Establishment Details</h2>
+    <div id="detail" class="detail-grid">
+      <span class="muted">Click a row above to see the full record.</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const FILTER_COLS = [{% for label, col in filter_columns %}"{{ col }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+let currentPage = 1;
+let totalPages = 1;
+let sortCol = "";
+let sortDir = "asc";
+let debounceTimer = null;
+
+document.getElementById("q").addEventListener("keyup", function (e) {
+  if (e.key === "Enter") { runSearch(1); return; }
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => runSearch(1), 350);
+});
+
+function buildParams(page) {
+  const params = new URLSearchParams();
+  params.set("q", document.getElementById("q").value.trim());
+  params.set("field", document.getElementById("field").value);
+  FILTER_COLS.forEach(col => {
+    const v = document.getElementById("f_" + col).value;
+    if (v && v !== "All") params.set("f_" + col, v);
+  });
+  if (sortCol) { params.set("sort", sortCol); params.set("dir", sortDir); }
+  if (page) params.set("page", page);
+  return params;
+}
+
+async function loadFilters() {
+  const res = await fetch("/api/filters");
+  const data = await res.json();
+  FILTER_COLS.forEach(col => {
+    const sel = document.getElementById("f_" + col);
+    (data[col] || []).forEach(v => {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      sel.appendChild(opt);
+    });
+  });
+}
+
+async function runSearch(page) {
+  currentPage = page || 1;
+  document.getElementById("spinner").style.display = "inline";
+  const params = buildParams(currentPage);
+  const res = await fetch("/api/search?" + params.toString());
+  const data = await res.json();
+  document.getElementById("spinner").style.display = "none";
+
+  currentPage = data.page;
+  totalPages = data.pages;
+
+  const tbody = document.getElementById("results");
+  tbody.innerHTML = "";
+  data.rows.forEach(r => {
+    const tr = document.createElement("tr");
+    tr.dataset.idx = r.idx;
+    r.values.forEach(v => {
+      const td = document.createElement("td");
+      td.textContent = v;
+      tr.appendChild(td);
+    });
+    tr.addEventListener("click", () => selectRow(tr, r.idx));
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById("status").textContent =
+    data.total.toLocaleString() + " matching establishment(s)";
+  document.getElementById("pageInfo").textContent =
+    "Page " + data.page + " of " + data.pages;
+  document.getElementById("prevBtn").disabled = data.page <= 1;
+  document.getElementById("nextBtn").disabled = data.page >= data.pages;
+}
+
+function changePage(delta) {
+  const next = currentPage + delta;
+  if (next >= 1 && next <= totalPages) runSearch(next);
+}
+
+function sortBy(col) {
+  if (sortCol === col) {
+    sortDir = sortDir === "asc" ? "desc" : "asc";
+  } else {
+    sortCol = col;
+    sortDir = "asc";
+  }
+  document.querySelectorAll("thead th .arrow").forEach(a => a.textContent = "");
+  const th = document.querySelector('thead th[data-col="' + col + '"] .arrow');
+  if (th) th.textContent = sortDir === "asc" ? "\u25B2" : "\u25BC";
+  runSearch(1);
+}
+
+async function selectRow(tr, idx) {
+  document.querySelectorAll("tbody tr.selected").forEach(r => r.classList.remove("selected"));
+  tr.classList.add("selected");
+  const res = await fetch("/api/detail/" + idx);
+  const data = await res.json();
+  const box = document.getElementById("detail");
+  box.innerHTML = "";
+  (data.fields || []).forEach(f => {
+    const row = document.createElement("div");
+    row.className = "detail-row";
+    const dl = document.createElement("span");
+    dl.className = "dl";
+    dl.textContent = f.label;
+    const dv = document.createElement("span");
+    dv.className = "dv";
+    dv.textContent = f.value;
+    row.appendChild(dl);
+    row.appendChild(dv);
+    box.appendChild(row);
+  });
+}
+
+function clearSearch() {
+  document.getElementById("q").value = "";
+  runSearch(1);
+}
+
+function resetFilters() {
+  FILTER_COLS.forEach(col => document.getElementById("f_" + col).value = "All");
+  document.getElementById("q").value = "";
+  runSearch(1);
+}
+
+function exportResults(fmt) {
+  const params = buildParams(null);
+  params.set("format", fmt);
+  window.location.href = "/api/export?" + params.toString();
+}
+
+loadFilters().then(() => runSearch(1));
+</script>
+</body>
+</html>
