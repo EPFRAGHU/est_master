@@ -23,7 +23,7 @@ import pandas as pd
 from flask import Flask, jsonify, request, render_template, send_file
 from openpyxl import Workbook
 
-from db import get_ecr_history, establishments_to_dataframe, get_overall_upload_status
+from db import get_ecr_history, establishments_to_dataframe, get_overall_upload_status, engine as db_engine
 
 APP_TITLE = "Establishment Master Search"
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "establishment_master.csv")
@@ -326,6 +326,9 @@ def api_debug_est(est_id):
         if not fmatch.empty:
             fresh = fmatch.iloc[0].to_dict()
     return jsonify({
+        "db_host": db_engine.url.host if db_engine else None,
+        "db_name": db_engine.url.database if db_engine else None,
+        "db_row_count_live": fresh_df.shape[0] if fresh_df is not None else None,
         "df_row_count": len(DF),
         "cached_row": cached,
         "fresh_query_row": fresh,
