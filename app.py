@@ -19,8 +19,9 @@ import csv
 
 import pandas as pd
 from flask import Flask, jsonify, request, render_template, send_file
+from openpyxl import Workbook
 
-from db import get_ecr_history
+from db import get_ecr_history, establishments_to_dataframe
 
 APP_TITLE = "Establishment Master Search"
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "establishment_master.csv")
@@ -139,21 +140,31 @@ def load_master_csv(path):
     return df
 
 
-# Load data once at startup
-if os.path.exists(DATA_FILE):
-    DF = load_master_csv(DATA_FILE)
-    # Ensure expected columns exist
+def load_establishments():
+    """Prefer the shared Neon establishments table (kept in sync with
+    ecr-viewer's admin uploads) - fall back to the local CSV only when no DB
+    is configured or the query fails, so local dev without Neon still works."""
+    df = establishments_to_dataframe()
+    if df is None or df.empty:
+        if os.path.exists(DATA_FILE):
+            df = load_master_csv(DATA_FILE)
+        else:
+            df = pd.DataFrame()
+    # Ensure expected columns exist regardless of source
     for col, _ in DISPLAY_COLUMNS:
-        if col not in DF.columns:
-            DF[col] = ""
+        if col not in df.columns:
+            df[col] = ""
     for col in ALL_TEXT_SEARCH_COLUMNS:
-        if col not in DF.columns:
-            DF[col] = ""
+        if col not in df.columns:
+            df[col] = ""
     for _, col in FILTER_COLUMNS:
-        if col not in DF.columns:
-            DF[col] = ""
-else:
-    DF = pd.DataFrame()
+        if col not in df.columns:
+            df[col] = ""
+    return df
+
+
+# Load data once at startup
+DF = load_establishments()
 
 
 def apply_search(args):
@@ -271,8 +282,17 @@ def api_export():
     fmt = request.args.get("format", "csv").lower()
 
     if fmt == "xlsx":
+        # openpyxl's write-only mode streams rows straight to the output zip
+        # as they're appended instead of building the whole workbook as
+        # in-memory Python objects first (what pandas' default to_excel()
+        # does) - that's what was spiking memory on large/unfiltered exports.
+        wb = Workbook(write_only=True)
+        ws = wb.create_sheet("Establishments")
+        ws.append(list(result.columns))
+        for row in result.itertuples(index=False, name=None):
+            ws.append(list(row))
         buf = io.BytesIO()
-        result.to_excel(buf, index=False)
+        wb.save(buf)
         buf.seek(0)
         return send_file(
             buf,
@@ -281,9 +301,9 @@ def api_export():
             download_name="establishment_results.xlsx",
         )
 
-    buf = io.StringIO()
-    result.to_csv(buf, index=False, quoting=csv.QUOTE_MINIMAL)
-    data = io.BytesIO(buf.getvalue().encode("utf-8-sig"))
+    data = io.BytesIO()
+    result.to_csv(data, index=False, quoting=csv.QUOTE_MINIMAL, encoding="utf-8-sig")
+    data.seek(0)
     return send_file(
         data,
         mimetype="text/csv",

@@ -1,15 +1,18 @@
 """
-Read-only link to the shared Neon Postgres database that ecr-viewer's
-admin upload writes to. est_master doesn't own this data - it only reads
-ecr_monthly (per-establishment ECR/employee/contribution history) so the
-establishment detail pane can show it alongside the master-file fields.
+Read-only link to the shared Neon Postgres database that both ecr-viewer's
+and est_master's admin uploads write to. est_master reads the whole
+establishments table at startup (establishments_to_dataframe) so its search
+page shows the same synced data ecr-viewer has, and reads ecr_monthly
+per-establishment so the detail pane can show ECR filing history alongside
+the master-file fields.
 
-If DATABASE_URL isn't set, get_ecr_history() just returns an empty list
-(no ECR history section shown) rather than failing - local dev without a
-DB configured still works for everything else in this app.
+If DATABASE_URL isn't set, establishments_to_dataframe() returns None (the
+caller falls back to the local CSV) and get_ecr_history() returns an empty
+list - local dev without a DB configured still works for everything else.
 """
 import os
 
+import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
@@ -20,6 +23,73 @@ if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True) if DATABASE_URL else None
+
+# Shared establishments table's db column -> the raw EPFO MIS header name
+# est_master's app.py (DISPLAY_COLUMNS, FILTER_COLUMNS, FIELD_LABELS, etc.)
+# expects. Keep in sync with ecr-viewer's db.py ESTABLISHMENT_COLUMNS and
+# csv_upload.py MASTER_COLUMN_ALIASES - see
+# docs/superpowers/specs/2026-08-22-shared-establishment-master-design.md
+# (in the ecr-viewer repo).
+ESTABLISHMENT_COLUMN_MAP = {
+    "est_id": "EST_ID",
+    "office_id": "OFFICE_ID",
+    "est_name": "EST_NAME",
+    "address1": "INCROP_ADDRESS1",
+    "address2": "INCROP_ADDRESS2",
+    "city": "INCROP_CITY",
+    "district": "INCROP_DIST",
+    "pin": "INCROP_PIN",
+    "cover_date": "COVER_DATE",
+    "industry": "IND_GROUP_NAME",
+    "coverage_section": "COVER_SECTION_NAME",
+    "email": "PRIMARY_EMAIL",
+    "task_id": "ACC_TASK_ID",
+    "dsc": "DSC",
+    "esn": "ESN",
+    "form_5a": "F5A",
+    "lin_code": "LIN_CODE",
+    "est_cin": "EST_CIN",
+    "pan": "PAN",
+    "exemption_status": "EXEMPTION_STATUS_NAME",
+    "est_status": "EST_STATUS_NAME",
+    "est_type": "EST_TYPE_NAME",
+    "actionable_status": "ACTIONABLE_STATUS_NAME",
+    "cont_rate": "CONT_RATE_NAME",
+    "acc_year": "ACC_YEAR_NAME",
+    "ind_code": "IND_CODE_NAME",
+    "ins_group_id": "INS_GROUP_ID",
+    "ins_task_id": "INS_TASK_ID",
+    "enf_group_id": "ENF_GROUP_ID",
+    "enf_task_id": "ENF_TASK_ID",
+    "acc_grp_id": "ACC_GRP_ID",
+    "uans": "UANS",
+    "er_portal_registered": "REGISTERED_ON_ER_PORTAL",
+    "accts": "ACCTS",
+    "aadhaar_seeded": "AADHAAR_SEEDED",
+    "aadhaar_verified": "AADHAAR_VERIFIED",
+    "bank_seeded": "BANK_SEEDED",
+    "pan_seeded": "PAN_SEEDED",
+    "mobile_seeded": "MOBILE_SEEDED",
+}
+
+
+def establishments_to_dataframe():
+    """Load the full shared establishments table, renamed to the raw MIS
+    column names the rest of app.py expects. Returns None if no DB is
+    configured (caller should fall back to the local CSV) or on any query
+    error (e.g. table doesn't exist yet on a fresh DB)."""
+    if engine is None:
+        return None
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(text("SELECT * FROM establishments"), conn)
+    except Exception:
+        return None
+    df = df.rename(columns=ESTABLISHMENT_COLUMN_MAP)
+    df = df.fillna("")
+    for col in df.columns:
+        df[col] = df[col].astype(str).str.strip()
+    return df
 
 MONTH_LABEL = {
     1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
