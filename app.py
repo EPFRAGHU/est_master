@@ -22,7 +22,7 @@ from flask import Flask, jsonify, request, render_template, send_file
 
 APP_TITLE = "Establishment Master Search"
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "establishment_master.csv")
-MAX_DISPLAY_ROWS = 500  # rows per page
+MAX_DISPLAY_ROWS = 5  # rows per page
 
 DISPLAY_COLUMNS = [
     ("EST_ID", "Establishment ID"),
