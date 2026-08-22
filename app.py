@@ -21,7 +21,7 @@ import pandas as pd
 from flask import Flask, jsonify, request, render_template, send_file
 from openpyxl import Workbook
 
-from db import get_ecr_history, establishments_to_dataframe
+from db import get_ecr_history, establishments_to_dataframe, get_overall_upload_status
 
 APP_TITLE = "Establishment Master Search"
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "establishment_master.csv")
@@ -207,12 +207,20 @@ def apply_search(args):
 
 @app.route("/")
 def index():
+    status = get_overall_upload_status()
+    header_info = None
+    if status["last_updated"]:
+        header_info = {
+            "date": status["last_updated"].strftime("%d %b %Y"),
+            "version": status["version"],
+        }
     return render_template(
         "index.html",
         app_title=APP_TITLE,
         display_columns=DISPLAY_COLUMNS,
         filter_columns=FILTER_COLUMNS,
         total_records=len(DF),
+        header_info=header_info,
     )
 
 

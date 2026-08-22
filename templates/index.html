@@ -185,6 +185,9 @@
 <header>
   <h1>{{ app_title }}</h1>
   <span class="sub">{{ "{:,}".format(total_records) }} establishments loaded</span>
+  {% if header_info %}
+  <span class="sub">&middot; Data as of {{ header_info.date }} &middot; v{{ header_info.version }}</span>
+  {% endif %}
 </header>
 
 <div class="container">

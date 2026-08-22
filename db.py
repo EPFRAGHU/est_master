@@ -91,6 +91,23 @@ def establishments_to_dataframe():
         df[col] = df[col].astype(str).str.strip()
     return df
 
+
+def get_overall_upload_status():
+    """Latest admin-upload timestamp + total upload count from the shared
+    upload_log table (populated by both ecr-viewer's and est_master's admin
+    uploads) - same figure ecr-viewer shows in its own header, so both apps
+    display the same 'data as of / version' line."""
+    if engine is None:
+        return {"last_updated": None, "version": 0}
+    try:
+        with engine.connect() as conn:
+            last = conn.execute(text("SELECT MAX(uploaded_at) FROM upload_log")).scalar()
+            count = conn.execute(text("SELECT COUNT(*) FROM upload_log")).scalar()
+    except Exception:
+        return {"last_updated": None, "version": 0}
+    return {"last_updated": last, "version": count}
+
+
 MONTH_LABEL = {
     1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
     7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
@@ -139,8 +156,9 @@ def get_ecr_history(est_id):
         month_cells = []
         for m in DISPLAY_MONTHS:
             cell = months_data.get(m)
+            calendar_year = dy + 1 if m in (1, 2, 3) else dy
             month_cells.append({
-                "month": MONTH_LABEL[m],
+                "month": f"{MONTH_LABEL[m].upper()}-{calendar_year}",
                 "filed": cell is not None,
                 "ecr_count": cell["ecr_count"] if cell else None,
                 "employees": cell["employees"] if cell else None,
