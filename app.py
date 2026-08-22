@@ -23,7 +23,7 @@ import pandas as pd
 from flask import Flask, jsonify, request, render_template, send_file
 from openpyxl import Workbook
 
-from db import get_ecr_history, establishments_to_dataframe, get_overall_upload_status, engine as db_engine
+from db import get_ecr_history, establishments_to_dataframe, get_overall_upload_status
 
 APP_TITLE = "Establishment Master Search"
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "establishment_master.csv")
@@ -307,33 +307,6 @@ def api_detail(idx):
 @app.route("/api/ecr/<est_id>")
 def api_ecr(est_id):
     return jsonify({"years": get_ecr_history(est_id)})
-
-
-@app.route("/api/_debug_est/<est_id>")
-def api_debug_est(est_id):
-    """TEMPORARY - compares the cached DF row against a brand-new DB query
-    for the same est_id, within this same running process, to isolate
-    whether stale caching or a real query/mapping bug is at fault."""
-    est_id = est_id.strip().upper()
-    cached = None
-    match = DF[DF["EST_ID"] == est_id]
-    if not match.empty:
-        cached = match.iloc[0].to_dict()
-    fresh_df = establishments_to_dataframe()
-    fresh = None
-    if fresh_df is not None:
-        fmatch = fresh_df[fresh_df["EST_ID"] == est_id]
-        if not fmatch.empty:
-            fresh = fmatch.iloc[0].to_dict()
-    return jsonify({
-        "db_host": db_engine.url.host if db_engine else None,
-        "db_name": db_engine.url.database if db_engine else None,
-        "db_row_count_live": fresh_df.shape[0] if fresh_df is not None else None,
-        "df_row_count": len(DF),
-        "cached_row": cached,
-        "fresh_query_row": fresh,
-        "fresh_df_is_none": fresh_df is None,
-    })
 
 
 @app.route("/api/export")
