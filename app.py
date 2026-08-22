@@ -16,6 +16,8 @@ Expects a CSV file named "establishment_master.csv" in the same folder.
 import os
 import io
 import csv
+import threading
+import time
 
 import pandas as pd
 from flask import Flask, jsonify, request, render_template, send_file
@@ -170,6 +172,25 @@ def load_establishments():
 
 # Load data once at startup
 DF = load_establishments()
+
+REFRESH_INTERVAL_SECONDS = 10 * 60
+
+
+def _refresh_loop():
+    """Reload DF from the shared DB periodically so admin uploads made via
+    ecr-viewer's admin panel (or a future est_master one) show up here
+    without needing a manual restart - see load_establishments()'s docstring
+    for why a one-time startup load isn't enough on its own."""
+    global DF
+    while True:
+        time.sleep(REFRESH_INTERVAL_SECONDS)
+        try:
+            DF = load_establishments()
+        except Exception:
+            app.logger.exception("Background establishment refresh failed")
+
+
+threading.Thread(target=_refresh_loop, daemon=True).start()
 
 
 def apply_search(args):
