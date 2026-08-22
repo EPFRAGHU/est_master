@@ -167,6 +167,16 @@
     background: #f7f9fa;
   }
   .detail-row .dv { font-weight: 600; word-break: break-word; padding: 6px 10px; }
+
+  #ecrHistory { --miss: #fdecea; --hit: #eaf6ea; }
+  #ecrHistory .year-block { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 14px; }
+  #ecrHistory .year-title { padding: 8px 12px; background: #eef3f8; font-weight: 600; border-bottom: 1px solid var(--border); color: var(--primary); font-size: 13px; }
+  #ecrHistory table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; }
+  #ecrHistory th, #ecrHistory td { border: 1px solid var(--border); padding: 5px 4px; text-align: center; overflow: hidden; }
+  #ecrHistory thead th { background: #f8fafc; font-weight: 600; }
+  #ecrHistory th.row-label, #ecrHistory td.row-label { width: 100px; text-align: left; font-weight: 600; background: #fafbfc; }
+  #ecrHistory td.missed { background: var(--miss); color: #a33; }
+  #ecrHistory td.filed { background: var(--hit); }
   .muted { color: #85929e; }
   .spinner { display: none; color: var(--primary-light); font-weight: 600; }
 </style>
@@ -248,6 +258,11 @@
     <div id="detail" class="detail-grid">
       <span class="muted">Click a row above to see the full record.</span>
     </div>
+  </div>
+
+  <div class="detail" id="ecrHistoryBox" style="display:none;">
+    <h2>ECR History</h2>
+    <div id="ecrHistory"></div>
   </div>
 
 </div>
@@ -351,7 +366,9 @@ async function selectRow(tr, idx) {
   const data = await res.json();
   const box = document.getElementById("detail");
   box.innerHTML = "";
+  let estId = null;
   (data.fields || []).forEach(f => {
+    if (f.label === "Establishment ID") estId = f.value;
     const row = document.createElement("div");
     row.className = "detail-row";
     const dl = document.createElement("span");
@@ -364,6 +381,63 @@ async function selectRow(tr, idx) {
     row.appendChild(dv);
     box.appendChild(row);
   });
+  loadEcrHistory(estId);
+}
+
+function fmtAmt(v) {
+  if (v === null || v === undefined) return "-";
+  return Number(v).toLocaleString("en-IN");
+}
+
+async function loadEcrHistory(estId) {
+  const historyBox = document.getElementById("ecrHistoryBox");
+  const history = document.getElementById("ecrHistory");
+  if (!estId || estId === "-") {
+    historyBox.style.display = "none";
+    return;
+  }
+  historyBox.style.display = "block";
+  history.innerHTML = '<span class="muted">Loading...</span>';
+  let years = [];
+  try {
+    const res = await fetch("/api/ecr/" + encodeURIComponent(estId));
+    const data = await res.json();
+    years = data.years || [];
+  } catch (err) {
+    history.innerHTML = '<span class="muted">Could not load ECR history.</span>';
+    return;
+  }
+  if (!years.length) {
+    history.innerHTML = '<span class="muted">No ECR records found for this establishment.</span>';
+    return;
+  }
+  history.innerHTML = years.map(y => `
+    <div class="year-block">
+      <div class="year-title">Financial Year ${y.label} (Apr - Mar)</div>
+      <table>
+        <thead>
+          <tr>
+            <th class="row-label">Month</th>
+            ${y.months.map(m => `<th>${m.month}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="row-label">ECR</td>
+            ${y.months.map(m => `<td class="${m.filed ? 'filed' : 'missed'}">${m.filed ? m.ecr_count : '-'}</td>`).join('')}
+          </tr>
+          <tr>
+            <td class="row-label">Employee</td>
+            ${y.months.map(m => `<td class="${m.filed ? 'filed' : 'missed'}">${m.filed ? m.employees : '-'}</td>`).join('')}
+          </tr>
+          <tr>
+            <td class="row-label">Contribution</td>
+            ${y.months.map(m => `<td class="${m.filed ? 'filed' : 'missed'}">${m.filed ? fmtAmt(m.contribution) : '-'}</td>`).join('')}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `).join('');
 }
 
 let columnsInitialized = false;

@@ -20,6 +20,8 @@ import csv
 import pandas as pd
 from flask import Flask, jsonify, request, render_template, send_file
 
+from db import get_ecr_history
+
 APP_TITLE = "Establishment Master Search"
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "establishment_master.csv")
 MAX_DISPLAY_ROWS = 5  # rows per page
@@ -255,6 +257,11 @@ def api_detail(idx):
             "value": row[col] if row[col] != "" else "-",
         })
     return jsonify({"fields": fields})
+
+
+@app.route("/api/ecr/<est_id>")
+def api_ecr(est_id):
+    return jsonify({"years": get_ecr_history(est_id)})
 
 
 @app.route("/api/export")
