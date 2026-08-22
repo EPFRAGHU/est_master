@@ -104,11 +104,35 @@
     font-size: 12.5px;
     cursor: pointer;
     user-select: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.25);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
+  thead th:last-child { border-right: none; }
   thead th .arrow { font-size: 10px; margin-left: 3px; }
-  tbody td { padding: 6px 10px; border-bottom: 1px solid #eef1f2; font-size: 13px; }
-  tbody tr:hover { background: #eaf2f8; cursor: pointer; }
-  tbody tr.selected { background: #d4e6f1; }
+  .resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    user-select: none;
+    touch-action: none;
+  }
+  .resizer:hover, .resizer.resizing { background: rgba(255, 255, 255, 0.35); }
+  tbody td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #eef1f2;
+    border-right: 1px solid #eef1f2;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  tbody td:last-child { border-right: none; }
+  tbody tr:nth-child(even) td { background: #f7f9fa; }
+  tbody tr:hover td { background: #eaf2f8; cursor: pointer; }
+  tbody tr.selected td { background: #d4e6f1; }
 
   .pagination { display: flex; gap: 6px; align-items: center; }
   .pagination button:disabled { opacity: 0.4; cursor: default; }
@@ -188,11 +212,16 @@
   </div>
 
   <div class="table-wrap">
-    <table>
+    <table id="resultsTable">
+      <colgroup>
+        {% for col, label in display_columns %}
+        <col data-col="{{ col }}">
+        {% endfor %}
+      </colgroup>
       <thead>
         <tr>
           {% for col, label in display_columns %}
-          <th data-col="{{ col }}" onclick="sortBy('{{ col }}')">{{ label }}<span class="arrow"></span></th>
+          <th data-col="{{ col }}" onclick="sortBy('{{ col }}')">{{ label }}<span class="arrow"></span><span class="resizer" onmousedown="startResize(event, '{{ col }}')" onclick="event.stopPropagation()"></span></th>
           {% endfor %}
         </tr>
       </thead>
@@ -323,6 +352,43 @@ async function selectRow(tr, idx) {
   });
 }
 
+let columnsInitialized = false;
+
+function initColumnWidths() {
+  if (columnsInitialized) return;
+  const table = document.getElementById("resultsTable");
+  table.querySelectorAll("thead th").forEach(th => {
+    const col = th.dataset.col;
+    const colEl = table.querySelector('colgroup col[data-col="' + col + '"]');
+    if (colEl) colEl.style.width = th.offsetWidth + "px";
+  });
+  table.style.tableLayout = "fixed";
+  columnsInitialized = true;
+}
+
+function startResize(e, col) {
+  e.stopPropagation();
+  e.preventDefault();
+  const table = document.getElementById("resultsTable");
+  const colEl = table.querySelector('colgroup col[data-col="' + col + '"]');
+  const resizer = e.target;
+  const startX = e.pageX;
+  const startWidth = colEl.getBoundingClientRect().width;
+  resizer.classList.add("resizing");
+
+  function onMove(ev) {
+    const newWidth = Math.max(50, startWidth + (ev.pageX - startX));
+    colEl.style.width = newWidth + "px";
+  }
+  function onUp() {
+    resizer.classList.remove("resizing");
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
 function clearSearch() {
   document.getElementById("q").value = "";
   runSearch(1);
@@ -340,7 +406,7 @@ function exportResults(fmt) {
   window.location.href = "/api/export?" + params.toString();
 }
 
-loadFilters().then(() => runSearch(1));
+loadFilters().then(() => runSearch(1)).then(initColumnWidths);
 </script>
 </body>
 </html>
