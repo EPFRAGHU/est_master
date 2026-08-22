@@ -309,6 +309,30 @@ def api_ecr(est_id):
     return jsonify({"years": get_ecr_history(est_id)})
 
 
+@app.route("/api/_debug_est/<est_id>")
+def api_debug_est(est_id):
+    """TEMPORARY - compares the cached DF row against a brand-new DB query
+    for the same est_id, within this same running process, to isolate
+    whether stale caching or a real query/mapping bug is at fault."""
+    est_id = est_id.strip().upper()
+    cached = None
+    match = DF[DF["EST_ID"] == est_id]
+    if not match.empty:
+        cached = match.iloc[0].to_dict()
+    fresh_df = establishments_to_dataframe()
+    fresh = None
+    if fresh_df is not None:
+        fmatch = fresh_df[fresh_df["EST_ID"] == est_id]
+        if not fmatch.empty:
+            fresh = fmatch.iloc[0].to_dict()
+    return jsonify({
+        "df_row_count": len(DF),
+        "cached_row": cached,
+        "fresh_query_row": fresh,
+        "fresh_df_is_none": fresh_df is None,
+    })
+
+
 @app.route("/api/export")
 def api_export():
     """Export current filtered results as CSV or Excel."""
