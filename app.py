@@ -16,6 +16,7 @@ Expects a CSV file named "establishment_master.csv" in the same folder.
 import os
 import io
 import csv
+import re
 import threading
 import time
 
@@ -46,6 +47,10 @@ DISPLAY_COLUMNS = [
     ("EST_STATUS_NAME", "Status"),
     ("ACTIONABLE_STATUS_NAME", "Actionable Status"),
 ]
+
+# Columns that hold numbers-as-strings - sort these numerically (1, 2, 10)
+# instead of lexicographically (1, 10, 2).
+NUMERIC_SORT_COLUMNS = {"ACCTS", "UANS"}
 
 SEARCH_FIELD_OPTIONS = {
     "all": None,
@@ -223,10 +228,16 @@ def apply_search(args):
     sort_col = args.get("sort", "").strip()
     if sort_col and sort_col in result.columns:
         ascending = args.get("dir", "asc") != "desc"
-        result = result.sort_values(
-            by=sort_col, ascending=ascending,
-            key=lambda s: s.str.lower() if s.dtype == object else s,
-        )
+        if sort_col in NUMERIC_SORT_COLUMNS:
+            result = result.sort_values(
+                by=sort_col, ascending=ascending, na_position="last",
+                key=lambda s: pd.to_numeric(s, errors="coerce"),
+            )
+        else:
+            result = result.sort_values(
+                by=sort_col, ascending=ascending,
+                key=lambda s: s.str.lower() if s.dtype == object else s,
+            )
 
     return result
 
@@ -250,13 +261,34 @@ def index():
     )
 
 
+def _filter_option_sort_key(v):
+    """Sort by the leading numeric code (e.g. "2-MANUFACTURING" before
+    "10-FARMING") when present, falling back to plain text - a plain string
+    sort puts "10-..." before "2-..." which reads wrong for coded values."""
+    m = re.match(r"^-?\d+", v)
+    if m:
+        return (0, int(m.group()), v.lower())
+    return (1, 0, v.lower())
+
+
 @app.route("/api/filters")
 def api_filters():
-    """Return distinct values for each filter dropdown."""
+    """Return distinct values for each filter dropdown, cascaded: each
+    column's options only reflect rows matching every *other* currently
+    selected filter (e.g. picking Accounts Group 101 narrows Task ID to just
+    101xx codes) - so selecting one filter never leaves another showing
+    choices that would return zero results together."""
     options = {}
     if not DF.empty:
         for _, col in FILTER_COLUMNS:
-            options[col] = sorted(v for v in DF[col].unique() if v)
+            subset = DF
+            for _, other_col in FILTER_COLUMNS:
+                if other_col == col:
+                    continue
+                selected = request.args.get("f_" + other_col, "").strip()
+                if selected and selected != "All":
+                    subset = subset[subset[other_col] == selected]
+            options[col] = sorted((v for v in subset[col].unique() if v), key=_filter_option_sort_key)
     return jsonify(options)
 
 

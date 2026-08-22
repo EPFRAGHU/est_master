@@ -130,6 +130,7 @@
     text-overflow: ellipsis;
   }
   tbody td:last-child { border-right: none; }
+  th.num-col, td.num-col { text-align: right; }
   tbody tr:nth-child(even) td { background: #f7f9fa; }
   tbody tr:hover td { background: #eaf2f8; cursor: pointer; }
   tbody tr.selected td { background: #d4e6f1; }
@@ -215,7 +216,7 @@
       {% for label, col in filter_columns %}
       <div class="filter-item">
         <label>{{ label }}</label>
-        <select id="f_{{ col }}" onchange="runSearch(1)">
+        <select id="f_{{ col }}" onchange="onFilterChange()">
           <option value="All">All</option>
         </select>
       </div>
@@ -248,7 +249,7 @@
       <thead>
         <tr>
           {% for col, label in display_columns %}
-          <th data-col="{{ col }}" onclick="sortBy('{{ col }}')">{{ label }}<span class="arrow"></span><span class="resizer" onmousedown="startResize(event, '{{ col }}')" onclick="event.stopPropagation()"></span></th>
+          <th data-col="{{ col }}"{% if col in ('ACCTS', 'UANS') %} class="num-col"{% endif %} onclick="sortBy('{{ col }}')">{{ label }}<span class="arrow"></span><span class="resizer" onmousedown="startResize(event, '{{ col }}')" onclick="event.stopPropagation()"></span></th>
           {% endfor %}
         </tr>
       </thead>
@@ -272,6 +273,8 @@
 
 <script>
 const FILTER_COLS = [{% for label, col in filter_columns %}"{{ col }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+const DISPLAY_COLS = [{% for col, label in display_columns %}"{{ col }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+const NUMERIC_SORT_COLUMNS = new Set(["ACCTS", "UANS"]);
 let currentPage = 1;
 let totalPages = 1;
 let sortCol = "";
@@ -298,17 +301,30 @@ function buildParams(page) {
 }
 
 async function loadFilters() {
-  const res = await fetch("/api/filters");
+  const params = new URLSearchParams();
+  FILTER_COLS.forEach(col => {
+    const v = document.getElementById("f_" + col).value;
+    if (v && v !== "All") params.set("f_" + col, v);
+  });
+  const res = await fetch("/api/filters?" + params.toString());
   const data = await res.json();
   FILTER_COLS.forEach(col => {
     const sel = document.getElementById("f_" + col);
+    const current = sel.value;
+    sel.innerHTML = '<option value="All">All</option>';
     (data[col] || []).forEach(v => {
       const opt = document.createElement("option");
       opt.value = v;
       opt.textContent = v;
       sel.appendChild(opt);
     });
+    sel.value = (data[col] || []).includes(current) ? current : "All";
   });
+}
+
+async function onFilterChange() {
+  await loadFilters();
+  runSearch(1);
 }
 
 async function runSearch(page) {
@@ -327,9 +343,10 @@ async function runSearch(page) {
   data.rows.forEach(r => {
     const tr = document.createElement("tr");
     tr.dataset.idx = r.idx;
-    r.values.forEach(v => {
+    r.values.forEach((v, i) => {
       const td = document.createElement("td");
       td.textContent = v;
+      if (NUMERIC_SORT_COLUMNS.has(DISPLAY_COLS[i])) td.className = "num-col";
       tr.appendChild(td);
     });
     tr.addEventListener("click", () => selectRow(tr, r.idx));
@@ -485,9 +502,10 @@ function clearSearch() {
   runSearch(1);
 }
 
-function resetFilters() {
+async function resetFilters() {
   FILTER_COLS.forEach(col => document.getElementById("f_" + col).value = "All");
   document.getElementById("q").value = "";
+  await loadFilters();
   runSearch(1);
 }
 
