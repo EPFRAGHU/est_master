@@ -143,7 +143,12 @@ def load_master_csv(path):
 def load_establishments():
     """Prefer the shared Neon establishments table (kept in sync with
     ecr-viewer's admin uploads) - fall back to the local CSV only when no DB
-    is configured or the query fails, so local dev without Neon still works."""
+    is configured or the query fails, so local dev without Neon still works.
+
+    NOTE: this only runs once, at process startup - DF is an in-memory
+    snapshot, not re-queried per request. If ecr-viewer's admin panel
+    uploads new establishment data, this process won't see it until it's
+    restarted (Render: Manual Deploy > Deploy latest commit)."""
     df = establishments_to_dataframe()
     if df is None or df.empty:
         if os.path.exists(DATA_FILE):
