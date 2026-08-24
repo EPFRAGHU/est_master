@@ -86,6 +86,29 @@
   }
   #status { font-weight: 600; color: var(--primary); }
 
+  .empty-state {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 72px 24px;
+    text-align: center;
+  }
+  .empty-state .icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 18px;
+    border-radius: 50%;
+    background: #eaf2f8;
+    color: var(--primary-light);
+  }
+  .empty-state h2 { margin: 0 0 8px; font-size: 17px; color: #212f3d; font-weight: 600; }
+  .empty-state p { margin: 0; font-size: 13.5px; color: #85929e; max-width: 420px; margin-left: auto; margin-right: auto; }
+  .empty-state.no-results .icon { background: #f4f6f8; color: #85929e; }
+  .empty-state button { margin-top: 18px; }
+
   .table-wrap {
     background: #fff;
     border: 1px solid var(--border);
@@ -185,7 +208,7 @@
 <body>
 <header>
   <h1>{{ app_title }}</h1>
-  <span class="sub">{{ "{:,}".format(total_records) }} establishments loaded</span>
+  <span class="sub">{{ "{:,}".format(total_records) }} establishments available</span>
   {% if header_info %}
   <span class="sub">&middot; Data as of {{ header_info.date }} &middot; v{{ header_info.version }}</span>
   {% endif %}
@@ -228,45 +251,73 @@
     </div>
   </details>
 
-  <div class="status-bar">
-    <span id="status">Loading...</span>
-    <div class="pagination">
-      <button id="prevBtn" onclick="changePage(-1)">&laquo; Prev</button>
-      <span id="pageInfo"></span>
-      <button id="nextBtn" onclick="changePage(1)">Next &raquo;</button>
-      <button onclick="exportResults('csv')">Export CSV</button>
-      <button onclick="exportResults('xlsx')">Export Excel</button>
+  <div class="empty-state" id="promptState">
+    <div class="icon">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="7"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
     </div>
+    <h2>Search for an establishment to view results</h2>
+    <p>Type a name, ID, address, PAN, CIN, or LIN code above, or pick a filter &mdash; nothing loads until you search.</p>
   </div>
 
-  <div class="table-wrap">
-    <table id="resultsTable">
-      <colgroup>
-        {% for col, label in display_columns %}
-        <col data-col="{{ col }}">
-        {% endfor %}
-      </colgroup>
-      <thead>
-        <tr>
+  <div class="empty-state no-results" id="noResultsState" style="display:none;">
+    <div class="icon">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 8l-2-5H5L3 8"></path>
+        <path d="M3 8v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V8"></path>
+        <path d="M3 8h5a1 1 0 0 1 1 1v1a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2V9a1 1 0 0 1 1-1h5"></path>
+      </svg>
+    </div>
+    <h2>No establishments found</h2>
+    <p id="noResultsSubtext">No records match your search. Try a different search term, or adjust your filters.</p>
+    <button onclick="resetFilters()">Reset Filters</button>
+  </div>
+
+  <div id="resultsArea" style="display:none;">
+
+    <div class="status-bar">
+      <span id="status">Loading...</span>
+      <div class="pagination">
+        <button id="prevBtn" onclick="changePage(-1)">&laquo; Prev</button>
+        <span id="pageInfo"></span>
+        <button id="nextBtn" onclick="changePage(1)">Next &raquo;</button>
+        <button onclick="exportResults('csv')">Export CSV</button>
+        <button onclick="exportResults('xlsx')">Export Excel</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="resultsTable">
+        <colgroup>
           {% for col, label in display_columns %}
-          <th data-col="{{ col }}"{% if col in ('ACCTS', 'UANS') %} class="num-col"{% endif %} onclick="sortBy('{{ col }}')">{{ label }}<span class="arrow"></span><span class="resizer" onmousedown="startResize(event, '{{ col }}')" onclick="event.stopPropagation()"></span></th>
+          <col data-col="{{ col }}">
           {% endfor %}
-        </tr>
-      </thead>
-      <tbody id="results"></tbody>
-    </table>
-  </div>
-
-  <div class="detail">
-    <h2>Establishment Details</h2>
-    <div id="detail" class="detail-grid">
-      <span class="muted">Click a row above to see the full record.</span>
+        </colgroup>
+        <thead>
+          <tr>
+            {% for col, label in display_columns %}
+            <th data-col="{{ col }}"{% if col in ('ACCTS', 'UANS') %} class="num-col"{% endif %} onclick="sortBy('{{ col }}')">{{ label }}<span class="arrow"></span><span class="resizer" onmousedown="startResize(event, '{{ col }}')" onclick="event.stopPropagation()"></span></th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody id="results"></tbody>
+      </table>
     </div>
-  </div>
 
-  <div class="detail" id="ecrHistoryBox" style="display:none;">
-    <h2>ECR History</h2>
-    <div id="ecrHistory"></div>
+    <div class="detail">
+      <h2>Establishment Details</h2>
+      <div id="detail" class="detail-grid">
+        <span class="muted">Click a row above to see the full record.</span>
+      </div>
+    </div>
+
+    <div class="detail" id="ecrHistoryBox" style="display:none;">
+      <h2>ECR History</h2>
+      <div id="ecrHistory"></div>
+    </div>
+
   </div>
 
 </div>
@@ -327,13 +378,50 @@ async function onFilterChange() {
   runSearch(1);
 }
 
+function hasSearchCriteria() {
+  if (document.getElementById("q").value.trim()) return true;
+  return FILTER_COLS.some(col => {
+    const v = document.getElementById("f_" + col).value;
+    return v && v !== "All";
+  });
+}
+
+function showPromptState() {
+  document.getElementById("promptState").style.display = "block";
+  document.getElementById("noResultsState").style.display = "none";
+  document.getElementById("resultsArea").style.display = "none";
+}
+
+function showNoResultsState() {
+  document.getElementById("promptState").style.display = "none";
+  document.getElementById("noResultsState").style.display = "block";
+  document.getElementById("resultsArea").style.display = "none";
+}
+
+function showResultsState() {
+  document.getElementById("promptState").style.display = "none";
+  document.getElementById("noResultsState").style.display = "none";
+  document.getElementById("resultsArea").style.display = "block";
+}
+
 async function runSearch(page) {
+  if (!hasSearchCriteria()) {
+    showPromptState();
+    return;
+  }
+
   currentPage = page || 1;
   document.getElementById("spinner").style.display = "inline";
   const params = buildParams(currentPage);
   const res = await fetch("/api/search?" + params.toString());
   const data = await res.json();
   document.getElementById("spinner").style.display = "none";
+
+  if (!data.total) {
+    showNoResultsState();
+    return;
+  }
+  showResultsState();
 
   currentPage = data.page;
   totalPages = data.pages;
@@ -342,14 +430,14 @@ async function runSearch(page) {
   tbody.innerHTML = "";
   data.rows.forEach(r => {
     const tr = document.createElement("tr");
-    tr.dataset.idx = r.idx;
+    tr.dataset.estId = r.est_id;
     r.values.forEach((v, i) => {
       const td = document.createElement("td");
       td.textContent = v;
       if (NUMERIC_SORT_COLUMNS.has(DISPLAY_COLS[i])) td.className = "num-col";
       tr.appendChild(td);
     });
-    tr.addEventListener("click", () => selectRow(tr, r.idx));
+    tr.addEventListener("click", () => selectRow(tr, r.est_id));
     tbody.appendChild(tr);
   });
 
@@ -359,6 +447,7 @@ async function runSearch(page) {
     "Page " + data.page + " of " + data.pages;
   document.getElementById("prevBtn").disabled = data.page <= 1;
   document.getElementById("nextBtn").disabled = data.page >= data.pages;
+  initColumnWidths();
 }
 
 function changePage(delta) {
@@ -515,7 +604,7 @@ function exportResults(fmt) {
   window.location.href = "/api/export?" + params.toString();
 }
 
-loadFilters().then(() => runSearch(1)).then(initColumnWidths);
+loadFilters();
 </script>
 </body>
 </html>

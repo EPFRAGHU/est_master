@@ -2,7 +2,7 @@
 EPFO Establishment Master Search - Web App
 ------------------------------------------
 A Flask web application for browsing and searching the Establishment
-Master download (the CSV exported from the EPFO portal).
+Master data held in the shared Neon Postgres database (see db.py).
 
 Run locally:
     pip install -r requirements.txt
@@ -10,24 +10,26 @@ Run locally:
 
 Then open http://localhost:5000
 
-Expects a CSV file named "establishment_master.csv" in the same folder.
+Every search/filter/detail/export request queries the database directly -
+nothing is preloaded or cached in memory. The home page shows no listing
+until the user actually searches (types a query or picks a filter).
 """
 
 import os
 import io
 import csv
 import re
-import threading
-import time
 
-import pandas as pd
 from flask import Flask, jsonify, request, render_template, send_file
 from openpyxl import Workbook
 
-from db import get_ecr_history, establishments_to_dataframe, get_overall_upload_status
+from db import (
+    get_ecr_history, get_overall_upload_status, MIS_TO_DB_COLUMN,
+    search_establishments, count_establishments, distinct_filter_values,
+    get_establishment, total_establishment_count,
+)
 
 APP_TITLE = "Establishment Master Search"
-DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "establishment_master.csv")
 MAX_DISPLAY_ROWS = 5  # rows per page
 
 DISPLAY_COLUMNS = [
@@ -138,108 +140,67 @@ DETAIL_FIELD_ORDER = [
 app = Flask(__name__)
 
 
-def load_master_csv(path):
-    """Load the establishment master CSV as strings, tidy whitespace."""
-    df = pd.read_csv(path, dtype=str, keep_default_na=False, na_values=[""])
-    df = df.fillna("")
-    for col in df.columns:
-        df[col] = df[col].astype(str).str.strip()
-    return df
+def _build_where(args, exclude_col=None, include_query=True):
+    """Build a parameterized SQL WHERE fragment from the request's active
+    filter selections (+ free-text query, unless include_query=False).
+    exclude_col skips that column's own filter - used when computing that
+    column's cascading dropdown options from every *other* active filter.
 
+    Column names are always taken from our own trusted FILTER_COLUMNS/
+    ALL_TEXT_SEARCH_COLUMNS lists (never from a user-supplied column name),
+    so building the SQL text with them is safe - only the filter/search
+    *values* flow through bind parameters.
 
-def load_establishments():
-    """Prefer the shared Neon establishments table (kept in sync with
-    ecr-viewer's admin uploads) - fall back to the local CSV only when no DB
-    is configured or the query fails, so local dev without Neon still works.
+    Returns (where_sql, params, has_criteria) - has_criteria is False when
+    nothing was actually selected/typed, so callers can skip hitting the DB
+    entirely rather than running an unfiltered (all ~50k rows) query."""
+    clauses = []
+    params = {}
+    has_criteria = False
 
-    NOTE: this only runs once, at process startup - DF is an in-memory
-    snapshot, not re-queried per request. If ecr-viewer's admin panel
-    uploads new establishment data, this process won't see it until it's
-    restarted (Render: Manual Deploy > Deploy latest commit)."""
-    df = establishments_to_dataframe()
-    if df is None or df.empty:
-        if os.path.exists(DATA_FILE):
-            df = load_master_csv(DATA_FILE)
-        else:
-            df = pd.DataFrame()
-    # Ensure expected columns exist regardless of source
-    for col, _ in DISPLAY_COLUMNS:
-        if col not in df.columns:
-            df[col] = ""
-    for col in ALL_TEXT_SEARCH_COLUMNS:
-        if col not in df.columns:
-            df[col] = ""
     for _, col in FILTER_COLUMNS:
-        if col not in df.columns:
-            df[col] = ""
-    return df
-
-
-# Load data once at startup
-DF = load_establishments()
-
-REFRESH_INTERVAL_SECONDS = 10 * 60
-
-
-def _refresh_loop():
-    """Reload DF from the shared DB periodically so admin uploads made via
-    ecr-viewer's admin panel (or a future est_master one) show up here
-    without needing a manual restart - see load_establishments()'s docstring
-    for why a one-time startup load isn't enough on its own."""
-    global DF
-    while True:
-        time.sleep(REFRESH_INTERVAL_SECONDS)
-        try:
-            DF = load_establishments()
-        except Exception:
-            app.logger.exception("Background establishment refresh failed")
-
-
-threading.Thread(target=_refresh_loop, daemon=True).start()
-
-
-def apply_search(args):
-    """Apply filters + free-text search from request args. Returns filtered DataFrame."""
-    if DF.empty:
-        return DF
-
-    result = DF
-
-    # Dropdown filters
-    for _, col in FILTER_COLUMNS:
+        if col == exclude_col:
+            continue
         selected = args.get("f_" + col, "").strip()
         if selected and selected != "All":
-            result = result[result[col] == selected]
+            has_criteria = True
+            db_col = MIS_TO_DB_COLUMN[col]
+            key = f"filt_{db_col}"
+            clauses.append(f"{db_col} = :{key}")
+            params[key] = selected
 
-    # Free-text search
-    query = args.get("q", "").strip().lower()
-    if query:
-        field = args.get("field", "all")
-        cols = SEARCH_FIELD_OPTIONS.get(field)
-        if cols is None:
-            cols = ALL_TEXT_SEARCH_COLUMNS
-        mask = None
-        for col in cols:
-            col_mask = result[col].str.lower().str.contains(query, na=False, regex=False)
-            mask = col_mask if mask is None else (mask | col_mask)
-        result = result[mask]
+    if include_query:
+        query = args.get("q", "").strip()
+        if query:
+            has_criteria = True
+            field = args.get("field", "all")
+            cols = SEARCH_FIELD_OPTIONS.get(field)
+            if cols is None:
+                cols = ALL_TEXT_SEARCH_COLUMNS
+            or_clauses = []
+            for i, col in enumerate(cols):
+                db_col = MIS_TO_DB_COLUMN[col]
+                key = f"q{i}"
+                or_clauses.append(f"{db_col} ILIKE :{key}")
+                params[key] = f"%{query}%"
+            clauses.append("(" + " OR ".join(or_clauses) + ")")
 
-    # Sorting
+    where_sql = " AND ".join(clauses) if clauses else "TRUE"
+    return where_sql, params, has_criteria
+
+
+def _order_by_sql(args):
     sort_col = args.get("sort", "").strip()
-    if sort_col and sort_col in result.columns:
-        ascending = args.get("dir", "asc") != "desc"
+    sort_dir = "DESC" if args.get("dir") == "desc" else "ASC"
+    if sort_col and sort_col in MIS_TO_DB_COLUMN:
+        db_col = MIS_TO_DB_COLUMN[sort_col]
         if sort_col in NUMERIC_SORT_COLUMNS:
-            result = result.sort_values(
-                by=sort_col, ascending=ascending, na_position="last",
-                key=lambda s: pd.to_numeric(s, errors="coerce"),
-            )
-        else:
-            result = result.sort_values(
-                by=sort_col, ascending=ascending,
-                key=lambda s: s.str.lower() if s.dtype == object else s,
-            )
-
-    return result
+            # Numeric-looking values sort as numbers; anything non-numeric
+            # (blank, junk) falls back to NULL so it sorts last instead of
+            # erroring the whole query out on a bad cast.
+            return f"CASE WHEN {db_col} ~ '^-?\\d+(\\.\\d+)?$' THEN {db_col}::numeric END {sort_dir} NULLS LAST"
+        return f"LOWER({db_col}) {sort_dir}"
+    return "est_id ASC"
 
 
 @app.route("/")
@@ -256,7 +217,7 @@ def index():
         app_title=APP_TITLE,
         display_columns=DISPLAY_COLUMNS,
         filter_columns=FILTER_COLUMNS,
-        total_records=len(DF),
+        total_records=total_establishment_count(),
         header_info=header_info,
     )
 
@@ -277,54 +238,53 @@ def api_filters():
     column's options only reflect rows matching every *other* currently
     selected filter (e.g. picking Accounts Group 101 narrows Task ID to just
     101xx codes) - so selecting one filter never leaves another showing
-    choices that would return zero results together."""
+    choices that would return zero results together. These are cheap
+    DISTINCT queries regardless of table size, so (unlike search) they run
+    even before the user has searched, letting the Filters panel populate
+    immediately."""
     options = {}
-    if not DF.empty:
-        for _, col in FILTER_COLUMNS:
-            subset = DF
-            for _, other_col in FILTER_COLUMNS:
-                if other_col == col:
-                    continue
-                selected = request.args.get("f_" + other_col, "").strip()
-                if selected and selected != "All":
-                    subset = subset[subset[other_col] == selected]
-            options[col] = sorted((v for v in subset[col].unique() if v), key=_filter_option_sort_key)
+    for _, col in FILTER_COLUMNS:
+        where_sql, params, _ = _build_where(request.args, exclude_col=col, include_query=False)
+        db_col = MIS_TO_DB_COLUMN[col]
+        values = distinct_filter_values(db_col, where_sql, params)
+        options[col] = sorted(values, key=_filter_option_sort_key)
     return jsonify(options)
 
 
 @app.route("/api/search")
 def api_search():
-    if DF.empty:
+    """Search establishments directly in the database - nothing is
+    preloaded. Returns an empty result without touching the DB at all when
+    no query or filter is active, so the home page can show a "search to
+    begin" prompt instead of ever listing the whole table."""
+    where_sql, params, has_criteria = _build_where(request.args)
+    if not has_criteria:
         return jsonify({"total": 0, "rows": [], "page": 1, "pages": 0})
 
-    result = apply_search(request.args)
-    total = len(result)
+    total = count_establishments(where_sql, params)
 
-    # Pagination
     try:
         page = max(1, int(request.args.get("page", 1)))
     except ValueError:
         page = 1
     pages = max(1, (total + MAX_DISPLAY_ROWS - 1) // MAX_DISPLAY_ROWS)
     page = min(page, pages)
-    start = (page - 1) * MAX_DISPLAY_ROWS
-    page_df = result.iloc[start:start + MAX_DISPLAY_ROWS]
+    offset = (page - 1) * MAX_DISPLAY_ROWS
 
-    rows = []
-    for idx, row in page_df.iterrows():
-        rows.append({
-            "idx": int(idx),
-            "values": [row.get(col, "") for col, _ in DISPLAY_COLUMNS],
-        })
+    matched = search_establishments(where_sql, params, _order_by_sql(request.args), MAX_DISPLAY_ROWS, offset)
+    rows = [
+        {"est_id": r["EST_ID"], "values": [r.get(col, "") for col, _ in DISPLAY_COLUMNS]}
+        for r in matched
+    ]
 
     return jsonify({"total": total, "rows": rows, "page": page, "pages": pages})
 
 
-@app.route("/api/detail/<int:idx>")
-def api_detail(idx):
-    if DF.empty or idx not in DF.index:
+@app.route("/api/detail/<est_id>")
+def api_detail(est_id):
+    row = get_establishment(est_id)
+    if not row:
         return jsonify({"error": "Record not found"}), 404
-    row = DF.loc[idx]
     fields = []
     for col in DETAIL_FIELD_ORDER:
         if col not in row:
@@ -343,20 +303,23 @@ def api_ecr(est_id):
 
 @app.route("/api/export")
 def api_export():
-    """Export current filtered results as CSV or Excel."""
-    result = apply_search(request.args)
+    """Export matching results as CSV or Excel - same query as /api/search
+    but without pagination. Skips the query (empty export) when no search
+    criteria are active, matching the rest of the app."""
+    where_sql, params, has_criteria = _build_where(request.args)
     fmt = request.args.get("format", "csv").lower()
+    rows = search_establishments(where_sql, params, _order_by_sql(request.args)) if has_criteria else []
+    columns = list(MIS_TO_DB_COLUMN.keys())
 
     if fmt == "xlsx":
         # openpyxl's write-only mode streams rows straight to the output zip
-        # as they're appended instead of building the whole workbook as
-        # in-memory Python objects first (what pandas' default to_excel()
-        # does) - that's what was spiking memory on large/unfiltered exports.
+        # as they're appended, rather than building the whole workbook as
+        # in-memory Python objects first.
         wb = Workbook(write_only=True)
         ws = wb.create_sheet("Establishments")
-        ws.append(list(result.columns))
-        for row in result.itertuples(index=False, name=None):
-            ws.append(list(row))
+        ws.append(columns)
+        for row in rows:
+            ws.append([row.get(c, "") for c in columns])
         buf = io.BytesIO()
         wb.save(buf)
         buf.seek(0)
@@ -367,9 +330,12 @@ def api_export():
             download_name="establishment_results.xlsx",
         )
 
-    data = io.BytesIO()
-    result.to_csv(data, index=False, quoting=csv.QUOTE_MINIMAL, encoding="utf-8-sig")
-    data.seek(0)
+    text_buf = io.StringIO()
+    writer = csv.writer(text_buf, quoting=csv.QUOTE_MINIMAL)
+    writer.writerow(columns)
+    for row in rows:
+        writer.writerow([row.get(c, "") for c in columns])
+    data = io.BytesIO(text_buf.getvalue().encode("utf-8-sig"))
     return send_file(
         data,
         mimetype="text/csv",
